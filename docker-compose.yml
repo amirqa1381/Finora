@@ -1,0 +1,21 @@
+services:
+  api:
+    build: { context: ., dockerfile: deploy/docker/Dockerfile }
+    env_file: .env
+    ports: ["8000:8000"]
+    volumes: [".:/srv"]
+    depends_on: [db, redis]
+  worker:
+    build: { context: ., dockerfile: deploy/docker/Dockerfile }
+    command: celery -A app.workers.celery_app worker -l info
+    env_file: .env
+    depends_on: [db, redis]
+  db:
+    image: postgres:16
+    environment: { POSTGRES_USER: finora, POSTGRES_PASSWORD: finora, POSTGRES_DB: finora }
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+volumes:
+  pgdata:
