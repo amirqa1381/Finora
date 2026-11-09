@@ -95,7 +95,7 @@ def test_wrong_secret_rejected():
 
 
 def test_wrong_token_type_rejected():
-    token = jwt.encode(_claims(type="refresh"), SETTINGS.jwt_secret, algorithm="HS256")
+    token = jwt.encode(_claims(type="refresh"), SETTINGS.jwt_secret.get_secret_value(), algorithm="HS256")
     with pytest.raises(security.InvalidTokenError):
         security.decode_access_token(token)
 
@@ -103,7 +103,7 @@ def test_wrong_token_type_rejected():
 def test_missing_exp_rejected():
     claims = _claims()
     del claims["exp"]
-    token = jwt.encode(claims, SETTINGS.jwt_secret, algorithm="HS256")
+    token = jwt.encode(claims, SETTINGS.jwt_secret.get_secret_value(), algorithm="HS256")
     with pytest.raises(security.InvalidTokenError):
         security.decode_access_token(token)
 

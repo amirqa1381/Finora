@@ -1,5 +1,3 @@
-"""Pydantic v2 request/response schemas for accounts."""
-"""Pydantic v2 request/response schemas for accounts."""
 """Request/response schemas for the accounts (authentication) module."""
 from __future__ import annotations
 
