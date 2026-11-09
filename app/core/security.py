@@ -94,7 +94,7 @@ def create_access_token(user_id: UUID, *, now: datetime | None = None) -> str:
         "iat": int(issued_at.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=_JWT_ALGORITHM)
+    return jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm=_JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> UUID:
@@ -107,7 +107,7 @@ def decode_access_token(token: str) -> UUID:
     try:
         payload = jwt.decode(
             token,
-            settings.jwt_secret,
+            settings.jwt_secret.get_secret_value(),
             algorithms=[_JWT_ALGORITHM],  # a whitelist: rejects alg=none and algorithm swaps
             options={"require": _REQUIRED_CLAIMS},
         )
