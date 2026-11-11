@@ -6,7 +6,7 @@ import structlog
 from fastapi import FastAPI, Request, Response
 
 REQUEST_ID_HEADER = "X-Request-ID"
-_VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+_VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def _get_or_create_request_id(request: Request) -> str:
