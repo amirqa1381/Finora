@@ -14,8 +14,10 @@ services:
     image: postgres:16
     environment: { POSTGRES_USER: finora, POSTGRES_PASSWORD: finora, POSTGRES_DB: finora }
     volumes: ["pgdata:/var/lib/postgresql/data"]
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
   redis:
     image: redis:7
+    ports: 
+      - "127.0.0.1:6379:6379"
 volumes:
   pgdata:
