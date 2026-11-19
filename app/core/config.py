@@ -26,9 +26,11 @@ class Settings(BaseSettings):
     # The signing algorithm (HS256) is a constant in core/security.py, not a setting.
     jwt_secret: SecretStr = "ee4b87afcd7a2a09c26983ad99ad15800643418a5b5069a46114f6033a220599"
     access_token_ttl_seconds: int = 15 * 60
-    refresh_token_ttl_seconds: int = 30 * 24 * 60 * 60
+    refresh_token_ttl_seconds: int = 60 * 60 * 24 * 30
     login_max_failures: int = 5
+    login_window_seconds: int = 900
     register_max_per_window: int = 5
+    register_window_seconds: int = 3600
 
     # Envelope-encryption master key (Phase 3). Must come from env/KMS, never the DB.
     credentials_master_key: SecretStr | None = None

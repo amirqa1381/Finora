@@ -1,6 +1,8 @@
 """Request/response schemas for the accounts (authentication) module."""
 from __future__ import annotations
 
+from typing import Literal
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, field_validator
 
 # Tiny denylist for Phase 1. Later this can be loaded from a file of the most
@@ -54,3 +56,34 @@ class RegisterRequest(BaseModel):
             raise ValueError("password is too common")
         # Don't put `raw` in the error message: messages end up in responses/logs.
         return value
+
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Plain str, not EmailStr: a malformed email must give the same 401 as an
+    # unknown one, not a 422 that reveals the format check.
+    email: str = Field(min_length=1, max_length=320)
+    # max_length stops someone from sending a 10 MB "password" to Argon2.
+    password: SecretStr = Field(min_length=1, max_length=128)
+
+
+class RefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: SecretStr = Field(min_length=1, max_length=512)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    email: str

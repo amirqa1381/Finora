@@ -19,16 +19,26 @@ logger = structlog.get_logger(__name__)
 
 
 class AppError(Exception):
-    """Base class for all expected (business) errors."""
-
     status_code: ClassVar[int] = 400
     code: ClassVar[str] = "app_error"
     default_message: ClassVar[str] = "An error occurred"
-    headers: ClassVar[dict[str, str] | None] = None
+    headers: dict[str, str] | None = None  
+
 
     def __init__(self, message: str | None = None) -> None:
         self.message = message or self.default_message
         super().__init__(self.message)
+
+
+
+class RateLimitedError(AppError):
+    status_code = 429
+    code = "rate_limited"
+    default_message = "Too many requests"
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__()
+        self.headers = {"Retry-After": str(max(retry_after, 1))}
 
 
 class NotFoundError(AppError):

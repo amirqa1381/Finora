@@ -1,8 +1,11 @@
 """Business logic for audit. Public interface used by other modules."""
-from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
 from typing import Any
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.modules.audit.repository import AuditRepository
+
 
 class AuditService:
     def __init__(self, session: AsyncSession) -> None:
