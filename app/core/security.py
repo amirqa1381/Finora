@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import jwt
@@ -82,7 +82,7 @@ def create_access_token(user_id: UUID, *, now: datetime | None = None) -> str:
     library. Production code never passes it.
     """
     settings = get_settings()
-    issued_at = now or datetime.now(timezone.utc)
+    issued_at = now or datetime.now(UTC)
     if issued_at.tzinfo is None:
         # .timestamp() on a naive datetime silently assumes local time.
         raise ValueError("`now` must be timezone-aware")

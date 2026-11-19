@@ -1,7 +1,9 @@
 """Data access for audit. No business rules here."""
-from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
 from typing import Any
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.modules.audit.models import AuditLog
 
 
