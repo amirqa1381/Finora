@@ -14,20 +14,20 @@ class UserRepository:
         self._session = session
 
     async def get_by_email(self, email: str) -> User | None:
-        """
-        Get a user by email. and return None if not found.
-        """
-        statment = select(User).where(func.lower(User.email) == email.lower())
-        result = await self._session.execute(statment)
-        return result.scalar_one_or_none()
-    
+        statement = (
+            select(User)
+            .where(func.lower(User.email) == email.lower())
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
     async def get_by_id(self, user_id: UUID) -> User | None:
-        """
-        Get a user by id. and return None if not found."""
-        statment = select(User).where(User.id == user_id)
-        result = await self._session.execute(statment)
-        return result.scalar_one_or_none()
+        statement = (
+            select(User)
+            .where(User.id == user_id)
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
     
     async def create(self, *, email: str, password_hash: str) -> User:
@@ -63,11 +63,15 @@ class RefreshTokenRepository:
     ) -> RefreshToken | None:
         """Get a refresh token by its hash. Return None if not found."""
 
-        statment = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-        if for_update == True:
-            statment = statment.with_for_update()
+        statement = (
+            select(RefreshToken)
+            .where(RefreshToken.token_hash == token_hash)
+            .execution_options(populate_existing=True)
+        )
+        if for_update:
+            statement = statement.with_for_update()
 
-        result = await self._session.execute(statment)
+        result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
     async def revoke(self, token: RefreshToken, *, now: datetime) -> None:
