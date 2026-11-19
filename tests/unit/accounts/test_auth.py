@@ -114,7 +114,14 @@ async def test_login_failures_are_indistinguishable(client, db_session):
 
     for r in (unknown, wrong_pw, inactive):
         assert r.status_code == 401
-    assert unknown.json() == wrong_pw.json() == inactive.json()
+
+    def without_request_id(resp):
+        # request_id is unique per request by design; everything else must match.
+        error = {k: v for k, v in resp.json()["error"].items() if k != "request_id"}
+        return {**resp.json(), "error": error}
+
+    assert without_request_id(unknown) == without_request_id(wrong_pw)
+    assert without_request_id(wrong_pw) == without_request_id(inactive)
     assert unknown.json()["error"]["message"] == "Email or password is wrong"
 
 
@@ -149,7 +156,7 @@ async def test_refresh_rotates_token(client):
     assert r.status_code == 200
     t2 = r.json()
     assert t2["refresh_token"] != t1["refresh_token"]
-    assert (await client.get(f"{API}/me", headers=bearer(t2["access_token"]))).status_code == 200
+    assert (await client.get(f"{API}/auth/me", headers=bearer(t2["access_token"]))).status_code == 200
 
 
 async def test_reuse_of_rotated_token_revokes_all_sessions_of_that_user(client, db_session):
@@ -203,21 +210,21 @@ async def test_logout_is_idempotent_and_not_an_oracle(client):
 
 # ------------------------------------------------------------- /me
 async def test_me_requires_token(client):
-    r = await client.get(f"{API}/me")
+    r = await client.get(f"{API}/auth/me")
     assert r.status_code == 401
     assert r.headers["www-authenticate"] == "Bearer"
 
 
 async def test_me_returns_profile_without_secrets(client):
     t = await signed_in(client)
-    r = await client.get(f"{API}/me", headers=bearer(t["access_token"]))
+    r = await client.get(f"{API}/auth/me", headers=bearer(t["access_token"]))
     assert r.status_code == 200
     assert r.json()["email"] == "alice@example.com"
     assert "password" not in r.text
 
 
 async def _user_id(client, token) -> UUID:
-    return UUID((await client.get(f"{API}/me", headers=bearer(token))).json()["id"])
+    return UUID((await client.get(f"{API}/auth/me", headers=bearer(token))).json()["id"])
 
 
 async def test_me_rejects_expired_token(client):
@@ -225,30 +232,30 @@ async def test_me_rejects_expired_token(client):
     uid = await _user_id(client, t["access_token"])
     old = datetime.now(timezone.utc) - timedelta(hours=1)
     expired = security.create_access_token(uid, now=old)
-    assert (await client.get(f"{API}/me", headers=bearer(expired))).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=bearer(expired))).status_code == 401
 
 
 async def test_me_rejects_tampered_token(client):
     t = await signed_in(client)
     h, p, s = t["access_token"].split(".")
     bad_sig = s[:5] + ("A" if s[5] != "A" else "B") + s[6:]
-    assert (await client.get(f"{API}/me", headers=bearer(f"{h}.{p}.{bad_sig}"))).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=bearer(f"{h}.{p}.{bad_sig}"))).status_code == 401
 
 
 async def test_me_rejects_refresh_token_used_as_bearer(client):
     t = await signed_in(client)
-    assert (await client.get(f"{API}/me", headers=bearer(t["refresh_token"]))).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=bearer(t["refresh_token"]))).status_code == 401
 
 
 async def test_me_rejects_token_of_deactivated_user(client, db_session):
     t = await signed_in(client)
     await db_session.execute(text("update users set is_active=false"))
-    assert (await client.get(f"{API}/me", headers=bearer(t["access_token"]))).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=bearer(t["access_token"]))).status_code == 401
 
 
 async def test_me_rejects_valid_signature_for_nonexistent_user(client):
     ghost = security.create_access_token(uuid4())
-    assert (await client.get(f"{API}/me", headers=bearer(ghost))).status_code == 401
+    assert (await client.get(f"{API}/auth/me", headers=bearer(ghost))).status_code == 401
 
 
 # ------------------------------------------------------------- rate limits
