@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from uuid import uuid4
 
 import jwt
@@ -18,7 +18,7 @@ def _b64(obj: dict) -> str:
 
 def _claims(**over) -> dict:
     """A valid access-token payload. Tests override one field to break it."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     base = {
         "sub": str(uuid4()),
         "sid": str(uuid4()),  # session id: a required claim
@@ -77,7 +77,7 @@ def test_access_token_roundtrip_and_ttl():
 
 
 def test_expired_token_rejected():
-    past = datetime.now(timezone.utc) - timedelta(seconds=SETTINGS.access_token_ttl_seconds + 5)
+    past = datetime.now(UTC) - timedelta(seconds=SETTINGS.access_token_ttl_seconds + 5)
     token = security.create_access_token(uuid4(), session_id=uuid4(), now=past)
     with pytest.raises(security.InvalidTokenError):
         security.decode_access_token(token)

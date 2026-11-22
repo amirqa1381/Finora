@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from uuid import UUID, uuid4
 
 import jwt
@@ -238,7 +238,7 @@ async def test_me_returns_profile_without_secrets(client):
 async def test_me_rejects_expired_token(client):
     t = await signed_in(client)
     claims = security.decode_access_token(t["access_token"])
-    old = datetime.now(timezone.utc) - timedelta(hours=1)
+    old = datetime.now(UTC) - timedelta(hours=1)
     # Real user and real, live session: only the expiry is wrong.
     expired = security.create_access_token(claims.user_id, session_id=claims.session_id, now=old)
     assert (await me(client, expired)).status_code == 401
@@ -305,7 +305,7 @@ async def test_reuse_detection_kills_access_tokens_of_all_devices(client):
 async def test_access_token_without_sid_is_rejected(client):
     t = await signed_in(client)
     claims = security.decode_access_token(t["access_token"])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     forged = jwt.encode(
         {
             "sub": str(claims.user_id),
