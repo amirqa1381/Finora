@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -27,7 +28,13 @@ _JWT_ALGORITHM = "HS256"
 _ACCESS_TOKEN_TYPE = "access"
 # Without "require", PyJWT happily accepts a token that has no `exp` at all
 # (i.e. one that never expires).
-_REQUIRED_CLAIMS = ["exp", "iat", "sub", "type"]
+_REQUIRED_CLAIMS = ["exp", "iat", "sub", "sid","type"]
+
+
+@dataclass(frozen=True)
+class AccessTokenClaims:
+    user_id: UUID
+    session_id: UUID
 
 
 class InvalidTokenError(Exception):
@@ -75,51 +82,45 @@ def get_dummy_password_hash() -> str:
 
 
 # --------------------------------------------------------------------------- access tokens
-def create_access_token(user_id: UUID, *, now: datetime | None = None) -> str:
-    """Create a signed access JWT for `user_id`.
-
-    `now` exists only so tests can mint expired tokens without a time-mocking
-    library. Production code never passes it.
-    """
+def create_access_token(
+    user_id: UUID, *, session_id: UUID, now: datetime | None = None
+) -> str:
     settings = get_settings()
     issued_at = now or datetime.now(UTC)
-    if issued_at.tzinfo is None:
-        # .timestamp() on a naive datetime silently assumes local time.
-        raise ValueError("`now` must be timezone-aware")
-
-    expires_at = issued_at + timedelta(seconds=settings.access_token_ttl_seconds)
     payload = {
         "sub": str(user_id),
-        "type": _ACCESS_TOKEN_TYPE,
-        "iat": int(issued_at.timestamp()),
-        "exp": int(expires_at.timestamp()),
+        "sid": str(session_id), 
+        "type": "access",
+        "iat": issued_at,
+        "exp": issued_at + timedelta(seconds=settings.access_token_ttl_seconds),
     }
-    return jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm=_JWT_ALGORITHM)
+    return jwt.encode(
+        payload, settings.jwt_secret.get_secret_value(), algorithm=_JWT_ALGORITHM
+    )
 
 
-def decode_access_token(token: str) -> UUID:
-    """Verify `token` and return the user id it was issued for.
 
-    Raises InvalidTokenError for ANY problem (bad signature, expired, wrong
-    algorithm, missing claims, wrong type, non-UUID subject, garbage input).
-    """
+def decode_access_token(token: str) -> AccessTokenClaims:
     settings = get_settings()
     try:
         payload = jwt.decode(
             token,
             settings.jwt_secret.get_secret_value(),
-            algorithms=[_JWT_ALGORITHM],  # a whitelist: rejects alg=none and algorithm swaps
+            algorithms=[_JWT_ALGORITHM],
             options={"require": _REQUIRED_CLAIMS},
         )
-        subject = payload["sub"]
-        if payload["type"] != _ACCESS_TOKEN_TYPE or not isinstance(subject, str):
-            raise InvalidTokenError("invalid token")
-        return UUID(subject)
-    except InvalidTokenError:
-        raise
-    except (jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
-        raise InvalidTokenError("invalid token") from exc
+    except jwt.PyJWTError as exc:
+        raise InvalidTokenError("invalid access token") from exc
 
+    if payload.get("type") != "access":
+        raise InvalidTokenError("wrong token type")
+
+    try:
+        return AccessTokenClaims(
+            user_id=UUID(payload["sub"]), session_id=UUID(payload["sid"])
+        )
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise InvalidTokenError("invalid claims") from exc
 
 # --------------------------------------------------------------------------- refresh tokens
 def hash_refresh_token(raw: str) -> str:

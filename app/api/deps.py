@@ -60,7 +60,7 @@ async def get_current_user(
     if credentials is None:
         raise AuthenticationError("Invalid or missing token")
     try:
-        user_id = decode_access_token(credentials.credentials)
+        claims = decode_access_token(credentials.credentials)
     except InvalidTokenError:
         raise AuthenticationError("Invalid or missing token") from None
-    return await service.get_active_user(user_id)
+    return await service.get_active_user(claims.user_id, claims.session_id)

@@ -58,6 +58,14 @@ class RefreshTokenRepository:
         await self._session.flush()
         return token
 
+    async def get_by_id(self, token_id: UUID) -> RefreshToken | None:
+        statement = (
+            select(RefreshToken)
+            .where(RefreshToken.id == token_id)
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
     async def get_by_hash(
         self, token_hash: str, *, for_update: bool = False
     ) -> RefreshToken | None:
