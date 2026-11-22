@@ -131,9 +131,21 @@ class AccountsService:
         logger.info("logout", user_id=str(token.user_id))
 
     # ----------------------------------------------------------------- me
-    async def get_active_user(self, user_id: UUID) -> User:
+    async def get_active_user(self, user_id: UUID, session_id: UUID) -> User:
+        """User of a valid access token. The token's session must still be alive."""
+        now = datetime.now(UTC)
         user = await self._users.get_by_id(user_id)
-        if user is None or not user.is_active:
+        login_session = await self._tokens.get_by_id(session_id)
+
+        # Both queries always run; every failure gives the same message.
+        if (
+            user is None
+            or not user.is_active
+            or login_session is None
+            or login_session.user_id != user_id      # sid of someone else's session
+            or login_session.revoked_at is not None  # refresh / logout / reuse
+            or login_session.expires_at <= now
+        ):
             raise AuthenticationError("Invalid or missing token")
         return user
 
@@ -141,5 +153,8 @@ class AccountsService:
     async def _issue_tokens(self, user_id: UUID, *, now: datetime) -> TokenPair:
         raw, token_hash = generate_refresh_token()
         expires_at = now + timedelta(seconds=get_settings().refresh_token_ttl_seconds)
-        await self._tokens.add(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
-        return TokenPair(access_token=create_access_token(user_id), refresh_token=raw)
+        row = await self._tokens.add(
+            user_id=user_id, token_hash=token_hash, expires_at=expires_at
+        )
+        access = create_access_token(user_id, session_id=row.id)
+        return TokenPair(access_token=access, refresh_token=raw)

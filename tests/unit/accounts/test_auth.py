@@ -1,7 +1,8 @@
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from uuid import UUID, uuid4
 
+import jwt
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -40,6 +41,17 @@ async def signed_in(client, email="alice@example.com") -> dict:
 
 def bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def me(client, access_token: str):
+    return await client.get(f"{API}/auth/me", headers=bearer(access_token))
+
+
+def _shape(r) -> tuple[str, str]:
+    """The (code, message) of an error. request_id is different on every
+    request, so whole bodies can never be equal."""
+    err = r.json()["error"]
+    return err["code"], err["message"]
 
 
 # ------------------------------------------------------------- register
@@ -114,15 +126,8 @@ async def test_login_failures_are_indistinguishable(client, db_session):
 
     for r in (unknown, wrong_pw, inactive):
         assert r.status_code == 401
-
-    def without_request_id(resp):
-        # request_id is unique per request by design; everything else must match.
-        error = {k: v for k, v in resp.json()["error"].items() if k != "request_id"}
-        return {**resp.json(), "error": error}
-
-    assert without_request_id(unknown) == without_request_id(wrong_pw)
-    assert without_request_id(wrong_pw) == without_request_id(inactive)
-    assert unknown.json()["error"]["message"] == "Email or password is wrong"
+    assert _shape(unknown) == _shape(wrong_pw) == _shape(inactive)
+    assert _shape(unknown)[1] == "Email or password is wrong"
 
 
 async def test_unknown_email_still_burns_a_password_hash_verification(client, monkeypatch):
@@ -149,6 +154,13 @@ async def test_refresh_token_is_stored_only_as_hash(client, db_session):
     assert tokens["refresh_token"] not in hashes
 
 
+async def test_access_token_sid_is_the_id_of_the_refresh_token_row(client, db_session):
+    t = await signed_in(client)
+    sid = security.decode_access_token(t["access_token"]).session_id
+    row_id = (await db_session.execute(text("select id from refresh_tokens"))).scalar_one()
+    assert sid == row_id
+
+
 # ------------------------------------------------------------- refresh
 async def test_refresh_rotates_token(client):
     t1 = await signed_in(client)
@@ -156,7 +168,7 @@ async def test_refresh_rotates_token(client):
     assert r.status_code == 200
     t2 = r.json()
     assert t2["refresh_token"] != t1["refresh_token"]
-    assert (await client.get(f"{API}/auth/me", headers=bearer(t2["access_token"]))).status_code == 200
+    assert (await me(client, t2["access_token"])).status_code == 200
 
 
 async def test_reuse_of_rotated_token_revokes_all_sessions_of_that_user(client, db_session):
@@ -217,45 +229,118 @@ async def test_me_requires_token(client):
 
 async def test_me_returns_profile_without_secrets(client):
     t = await signed_in(client)
-    r = await client.get(f"{API}/auth/me", headers=bearer(t["access_token"]))
+    r = await me(client, t["access_token"])
     assert r.status_code == 200
     assert r.json()["email"] == "alice@example.com"
     assert "password" not in r.text
 
 
-async def _user_id(client, token) -> UUID:
-    return UUID((await client.get(f"{API}/auth/me", headers=bearer(token))).json()["id"])
-
-
 async def test_me_rejects_expired_token(client):
     t = await signed_in(client)
-    uid = await _user_id(client, t["access_token"])
-    old = datetime.now(timezone.utc) - timedelta(hours=1)
-    expired = security.create_access_token(uid, now=old)
-    assert (await client.get(f"{API}/auth/me", headers=bearer(expired))).status_code == 401
+    claims = security.decode_access_token(t["access_token"])
+    old = datetime.now(UTC) - timedelta(hours=1)
+    # Real user and real, live session: only the expiry is wrong.
+    expired = security.create_access_token(claims.user_id, session_id=claims.session_id, now=old)
+    assert (await me(client, expired)).status_code == 401
 
 
 async def test_me_rejects_tampered_token(client):
     t = await signed_in(client)
     h, p, s = t["access_token"].split(".")
     bad_sig = s[:5] + ("A" if s[5] != "A" else "B") + s[6:]
-    assert (await client.get(f"{API}/auth/me", headers=bearer(f"{h}.{p}.{bad_sig}"))).status_code == 401
+    assert (await me(client, f"{h}.{p}.{bad_sig}")).status_code == 401
 
 
 async def test_me_rejects_refresh_token_used_as_bearer(client):
     t = await signed_in(client)
-    assert (await client.get(f"{API}/auth/me", headers=bearer(t["refresh_token"]))).status_code == 401
+    assert (await me(client, t["refresh_token"])).status_code == 401
 
 
 async def test_me_rejects_token_of_deactivated_user(client, db_session):
     t = await signed_in(client)
     await db_session.execute(text("update users set is_active=false"))
-    assert (await client.get(f"{API}/auth/me", headers=bearer(t["access_token"]))).status_code == 401
+    assert (await me(client, t["access_token"])).status_code == 401
 
 
 async def test_me_rejects_valid_signature_for_nonexistent_user(client):
-    ghost = security.create_access_token(uuid4())
-    assert (await client.get(f"{API}/auth/me", headers=bearer(ghost))).status_code == 401
+    ghost = security.create_access_token(uuid4(), session_id=uuid4())
+    assert (await me(client, ghost)).status_code == 401
+
+
+# ------------------------------------------------------------- sid / sessions
+async def test_access_token_dies_immediately_after_refresh(client):
+    t1 = await signed_in(client)
+    assert (await me(client, t1["access_token"])).status_code == 200
+    t2 = (await refresh(client, t1["refresh_token"])).json()
+    assert (await me(client, t1["access_token"])).status_code == 401  # old one is dead
+    assert (await me(client, t2["access_token"])).status_code == 200  # new one works
+
+
+async def test_access_token_dies_after_logout(client):
+    t = await signed_in(client)
+    assert (await me(client, t["access_token"])).status_code == 200
+    assert (await logout(client, t["refresh_token"])).status_code == 204
+    assert (await me(client, t["access_token"])).status_code == 401
+
+
+async def test_logout_of_one_device_keeps_other_device_alive(client):
+    await register(client)
+    a = (await login(client)).json()
+    b = (await login(client)).json()
+    assert (await logout(client, a["refresh_token"])).status_code == 204
+    assert (await me(client, a["access_token"])).status_code == 401
+    assert (await me(client, b["access_token"])).status_code == 200
+
+
+async def test_reuse_detection_kills_access_tokens_of_all_devices(client):
+    await register(client)
+    a = (await login(client)).json()
+    b = (await login(client)).json()
+    a2 = (await refresh(client, a["refresh_token"])).json()
+    assert (await refresh(client, a["refresh_token"])).status_code == 401  # replay
+    for token in (b["access_token"], a2["access_token"]):
+        assert (await me(client, token)).status_code == 401
+
+
+async def test_access_token_without_sid_is_rejected(client):
+    t = await signed_in(client)
+    claims = security.decode_access_token(t["access_token"])
+    now = datetime.now(UTC)
+    forged = jwt.encode(
+        {
+            "sub": str(claims.user_id),
+            "type": "access",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        SETTINGS.jwt_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+    assert (await me(client, forged)).status_code == 401
+
+
+async def test_unknown_sid_for_a_real_user_is_rejected(client):
+    t = await signed_in(client)
+    claims = security.decode_access_token(t["access_token"])
+    forged = security.create_access_token(claims.user_id, session_id=uuid4())
+    assert (await me(client, forged)).status_code == 401
+
+
+async def test_sid_of_another_users_session_is_rejected(client):
+    alice = await signed_in(client, "alice@example.com")
+    bob = await signed_in(client, "bob@example.com")
+    alice_id = security.decode_access_token(alice["access_token"]).user_id
+    bob_sid = security.decode_access_token(bob["access_token"]).session_id
+    forged = security.create_access_token(alice_id, session_id=bob_sid)
+    assert (await me(client, forged)).status_code == 401
+
+
+async def test_expired_refresh_row_kills_its_access_token(client, db_session):
+    t = await signed_in(client)
+    await db_session.execute(
+        text("update refresh_tokens set expires_at = now() - interval '1 second'")
+    )
+    assert (await me(client, t["access_token"])).status_code == 401
 
 
 # ------------------------------------------------------------- rate limits
